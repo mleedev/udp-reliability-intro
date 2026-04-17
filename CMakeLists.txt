@@ -8,8 +8,8 @@ endif()
 
 project(ReliableUdpChat)
 
-add_executable(client client.cpp)
-add_executable(server server.cpp)
+add_executable(client client.cpp "protocol.h")
+add_executable(server server.cpp "protocol.h")
 
 # C++20 for both targets
 set_property(TARGET client server PROPERTY CXX_STANDARD 20)
