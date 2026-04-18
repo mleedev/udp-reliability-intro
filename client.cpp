@@ -19,7 +19,8 @@ int main()
     dest.sin_port   = htons(9000);
     const char* ip_address = "127.0.0.1";
     // Convert IP address as text → binary, assign it to dest.sin_addr
-    inet_pton(AF_INET, ip_address, &dest.sin_addr); 
+    inet_pton(AF_INET, ip_address, &dest.sin_addr);
+    int sender_len = sizeof(dest);
 
     // Payload (string) to be sent
     const char* msg = "Hello, UDP!";
@@ -47,11 +48,31 @@ int main()
     // sendto fires a single datagram; no connection needed beforehand
     int buf_size = static_cast<int>(HEADER_SERIALIZED_SIZE + strlen(msg));
     int sent = sendto(sock, reinterpret_cast<char*>(buf), buf_size, 0,
-                        reinterpret_cast<sockaddr*>(&dest), sizeof(dest));
+                        reinterpret_cast<sockaddr*>(&dest), sender_len);
 
     // Print bytes and message
     printf("Sent %d bytes: \"%s\"\n", sent, msg);
 
+    // Listen for ACK response
+    uint8_t ack_buf[MAX_PACKET_SIZE];
+    int received = recvfrom(sock, reinterpret_cast<char*>(ack_buf), sizeof(ack_buf), 0,
+                            reinterpret_cast<sockaddr*>(&dest), &sender_len);
+    PacketHeader ack_header{};
+    uint8_t ack_offset = 0;
+    ack_header.type = ack_buf[ack_offset];      ack_offset += 1;
+    uint16_t ack_seq, ack_len;
+    memcpy(&ack_seq, ack_buf + ack_offset, 2);  ack_offset += 2;
+    memcpy(&ack_len, ack_buf + ack_offset, 2);  ack_offset += 2;
+    ack_header.sequence = ntohs(ack_seq);
+    ack_header.length = ntohs(ack_len);
+
+    printf("Received %d bytes\n", received);
+    printf("type: %d\n", ack_header.type);
+    printf("sequence: %d\n", ack_header.sequence);
+    printf("length: %d\n", ack_header.length);
+
     closesocket(sock);
     WSACleanup(); // Release Winsock resources
+
+    return 0;
 }

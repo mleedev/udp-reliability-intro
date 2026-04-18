@@ -50,6 +50,29 @@ int main()
     printf("sequence: %d\n", header.sequence);
     printf("length: % d\n", header.length);
 
+    // If we received a data packet, send an ACK back
+    if (header.type == static_cast<uint8_t>(PacketType::PKT_DATA))
+    {
+        // Visualizing packet header for ACK packet
+        PacketHeader ack_header{};
+        ack_header.type = static_cast<uint8_t>(PacketType::PKT_ACK);
+        ack_header.sequence = 0;
+        ack_header.length = 0;
+
+        // Serializing packet header
+        uint8_t ack_buf[MAX_PACKET_SIZE];
+        uint8_t ack_offset = 0;
+        ack_buf[ack_offset] = ack_header.type;          ack_offset += 1;
+        uint16_t ack_seq = htons(ack_header.sequence);
+        memcpy(ack_buf + ack_offset, &ack_seq, 2);      ack_offset += 2;
+        uint16_t ack_len = htons(ack_header.length);
+        memcpy(ack_buf + ack_offset, &ack_len, 2);      ack_offset += 2;
+        sendto(sock, reinterpret_cast<char*>(ack_buf), ack_offset, 0,
+            reinterpret_cast<sockaddr*>(&sender), senderLen);
+    }
+
     closesocket(sock);
     WSACleanup(); // Release Winsock resources
+
+    return 0;
 }
