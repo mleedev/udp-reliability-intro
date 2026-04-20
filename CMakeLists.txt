@@ -8,12 +8,12 @@ endif()
 
 project(ReliableUdpChat)
 
-add_executable(client client.cpp "protocol.h")
-add_executable(server server.cpp "protocol.h")
+add_executable(sender "sender.cpp" "protocol.h")
+add_executable(receiver "receiver.cpp" "protocol.h")
 
 # C++20 for both targets
-set_property(TARGET client server PROPERTY CXX_STANDARD 20)
+set_property(TARGET sender receiver PROPERTY CXX_STANDARD 20)
 
 # Ws2_32 is the Windows Sockets library; required for any socket API calls
-target_link_libraries(client PRIVATE Ws2_32)
-target_link_libraries(server PRIVATE Ws2_32)
+target_link_libraries(sender PRIVATE Ws2_32)
+target_link_libraries(receiver PRIVATE Ws2_32)
