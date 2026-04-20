@@ -18,63 +18,91 @@ int main()
     addr.sin_port        = htons(9000); // htons converts host→network byte order
     addr.sin_addr.s_addr = INADDR_ANY; 
     bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
-
     printf("Server listening on UDP port 9000...\n");
 
-    uint8_t buf[MAX_PACKET_SIZE];
+    // Sender address
     sockaddr_in sender{};
     int senderLen = sizeof(sender);
+
+    // Initialize memory for loop variables: buffer, message, headers, trackers, etc
+    uint8_t buf[MAX_PACKET_SIZE], ack_buf[MAX_PACKET_SIZE];
+    uint8_t msg[MAX_PAYLOAD_SIZE + 1];
+    PacketHeader header{}, ack_header{};
+    uint8_t offset = 0, ack_offset = 0;
+    uint16_t seq, len, ack_seq, ack_len;
+    int received, sent;
+
+    // Track latest sequence number for duplicate suppression
+    uint16_t last_seq = UINT16_MAX;
 
     // Listen and receive packet loop
     while (true) {
         // recvfrom blocks until a datagram arrives; fills sender with the client's address
-        int received = recvfrom(sock, reinterpret_cast<char*>(buf), sizeof(buf) - 1, 0,
+        received = recvfrom(sock, reinterpret_cast<char*>(buf), sizeof(buf) - 1, 0,
             reinterpret_cast<sockaddr*>(&sender), &senderLen);
 
         // Packet deserialization variables
-        uint8_t offset = 0;
-        PacketHeader header{};
+        offset = 0;
 
         // Deserializing and interpreting packet
         header.type = buf[offset];      offset += 1;
-        uint16_t seq, len;
         memcpy(&seq, buf + offset, 2);  offset += 2;
         memcpy(&len, buf + offset, 2);  offset += 2;
         header.sequence = ntohs(seq);
         header.length = ntohs(len);
-        uint8_t msg[MAX_PAYLOAD_SIZE + 1];
+
         memcpy(msg, buf + offset, header.length);
         msg[header.length] = '\0';
 
-        // Printing packet information
-        printf("------\n");
-        printf("Received %d bytes; type - %d; seq - %d; len - %d\n",
-            received, header.type, header.sequence, header.length);
-        printf("msg: \"%s\"\n", msg);
-
-        // If we received a data packet, send an ACK back
-        if (header.type == static_cast<uint8_t>(PacketType::PKT_DATA))
+        // Duplicate suppression, check against last received sequence
+        if (last_seq == header.sequence)
         {
-            // Visualizing packet header for ACK response packet
-            PacketHeader ack_header{};
-            ack_header.type = static_cast<uint8_t>(PacketType::PKT_ACK);
-            ack_header.sequence = header.sequence;
-            ack_header.length = 0;
-
-            // Serializing ACK response packet header
-            uint8_t ack_buf[MAX_PACKET_SIZE];
-            uint8_t ack_offset = 0;
-            ack_buf[ack_offset] = ack_header.type;          ack_offset += 1;
-            uint16_t ack_seq = htons(ack_header.sequence);
-            memcpy(ack_buf + ack_offset, &ack_seq, 2);      ack_offset += 2;
-            uint16_t ack_len = htons(ack_header.length);
-            memcpy(ack_buf + ack_offset, &ack_len, 2);      ack_offset += 2;
-            int sent = sendto(sock, reinterpret_cast<char*>(ack_buf), ack_offset, 0,
+            /*
+            * Duplicate detected, sender didn't get our last ACK, resend it.
+            * Note: ACK variable values are being used from previous loop.
+            */
+            sent = sendto(sock, reinterpret_cast<char*>(ack_buf), ack_offset, 0,
                 reinterpret_cast<sockaddr*>(&sender), senderLen);
 
             // Print resposne ACK packet info
             printf("Sent %d bytes; type - %d; seq - %d; len - %d\n",
                 sent, ack_header.type, ack_header.sequence, ack_header.length);
+
+            // Proceed to next loop without printing received packet (we are dropping it)
+        }
+        else
+        {
+            // Printing packet information
+            printf("------\n");
+            printf("Received %d bytes; type - %d; seq - %d; len - %d\n",
+                received, header.type, header.sequence, header.length);
+            printf("msg: \"%s\"\n", msg);
+
+            // Track latest sequence for duplicate suppression
+            last_seq = header.sequence;
+
+            // If we received a data packet, send an ACK back
+            if (header.type == static_cast<uint8_t>(PacketType::PKT_DATA))
+            {
+                // Visualizing packet header for ACK response packet
+                ack_header.type = static_cast<uint8_t>(PacketType::PKT_ACK);
+                ack_header.sequence = header.sequence;
+                ack_header.length = 0;
+
+                // Serializing ACK response packet header
+                ack_offset = 0;
+                ack_buf[ack_offset] = ack_header.type;          ack_offset += 1;
+                ack_seq = htons(ack_header.sequence);
+                memcpy(ack_buf + ack_offset, &ack_seq, 2);      ack_offset += 2;
+                ack_len = htons(ack_header.length);
+                memcpy(ack_buf + ack_offset, &ack_len, 2);      ack_offset += 2;
+                sent = sendto(sock, reinterpret_cast<char*>(ack_buf), ack_offset, 0,
+                    reinterpret_cast<sockaddr*>(&sender), senderLen);
+
+                // Print resposne ACK packet info
+                printf("Sent %d bytes; type - %d; seq - %d; len - %d\n",
+                    sent, ack_header.type, ack_header.sequence, ack_header.length);
+            }
         }
     }
 

@@ -24,38 +24,47 @@ int main()
     inet_pton(AF_INET, ip_address, &dest.sin_addr);
     int sender_len = sizeof(dest);
 
+    // Initialize loop variables
+    char msg[16]; // 16 bytes allows us to send "Hello, UDP!" (11) plus 0-100 (1-3) plus "\n" (1)
+    PacketHeader header{}, ack_header{};
+    uint8_t buf[MAX_PACKET_SIZE], ack_buf[MAX_PACKET_SIZE];
+    uint8_t offset, ack_offset;
+    uint16_t seq, len, ack_seq, ack_len;
+    int buf_size;
+    int sent, received;
 
-
-    // Send 500 packets
+    // Track packet count (sequence)
     uint16_t packet_count = 0;
+    // Track retransmit attempts for each packet (resets per packet)
+    const uint8_t RETRY_MAX = 3;
     uint8_t retries = 0;
+    
+    // Stop at 100 packets sent
     while (packet_count < 100) 
     {
         // Payload (string) to be sent
-        const char msg[16] = "Hello, UDP!";
+        snprintf(msg, sizeof(msg), "Hello, UDP!%d", packet_count);
 
-        PacketHeader header{};
         header.type = static_cast<uint8_t>(PacketType::PKT_DATA);
         header.sequence = packet_count;
         header.length = static_cast<uint16_t>(strlen(msg));
 
         // Buffer
-        uint8_t buf[MAX_PACKET_SIZE];
-        uint8_t offset = 0;
+        offset = 0;
 
         // Serializing each field of the packet header
-        buf[offset] = header.type;              offset += 1;
-        uint16_t seq = htons(header.sequence);
-        memcpy(buf + offset, &seq, 2);          offset += 2;
-        uint16_t len = htons(header.length);
-        memcpy(buf + offset, &len, 2);          offset += 2;
+        buf[offset] = header.type;      offset += 1;
+        seq = htons(header.sequence);
+        memcpy(buf + offset, &seq, 2);  offset += 2;
+        len = htons(header.length);
+        memcpy(buf + offset, &len, 2);  offset += 2;
 
         // Appending msg to the packet
         memcpy(buf + offset, msg, strlen(msg));
 
         // sendto fires a single datagram; no connection needed beforehand
-        int buf_size = static_cast<int>(HEADER_SERIALIZED_SIZE + strlen(msg));
-        int sent = sendto(sock, reinterpret_cast<char*>(buf), buf_size, 0,
+        buf_size = static_cast<int>(HEADER_SERIALIZED_SIZE + strlen(msg));
+        sent = sendto(sock, reinterpret_cast<char*>(buf), buf_size, 0,
             reinterpret_cast<sockaddr*>(&dest), sender_len);
 
         // Print bytes and message
@@ -65,11 +74,9 @@ int main()
         printf("msg: \"%s\"\n", msg);
 
         // Listen for ACK response
-        uint8_t ack_buf[MAX_PACKET_SIZE];
-        int received = recvfrom(sock, reinterpret_cast<char*>(ack_buf), sizeof(ack_buf), 0,
+        received = recvfrom(sock, reinterpret_cast<char*>(ack_buf), sizeof(ack_buf), 0,
             reinterpret_cast<sockaddr*>(&dest), &sender_len);
 
-        const uint8_t RETRY_MAX = 3;
         // Timeout check
         while (received == SOCKET_ERROR) 
         {
@@ -115,10 +122,8 @@ int main()
         // Reset retry counter for next loop
         retries = 0;
 
-        PacketHeader ack_header{};
-        uint8_t ack_offset = 0;
+        ack_offset = 0;
         ack_header.type = ack_buf[ack_offset];      ack_offset += 1;
-        uint16_t ack_seq, ack_len;
         memcpy(&ack_seq, ack_buf + ack_offset, 2);  ack_offset += 2;
         memcpy(&ack_len, ack_buf + ack_offset, 2);  ack_offset += 2;
         ack_header.sequence = ntohs(ack_seq);
