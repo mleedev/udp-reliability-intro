@@ -1,6 +1,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <cstdio>
+#include <random>
+#include <ctime>
 #include "protocol.h"
 
 int main()
@@ -32,8 +34,14 @@ int main()
     uint16_t seq, len, ack_seq, ack_len;
     int received, sent;
 
-    // Track latest sequence number for duplicate suppression
-    uint16_t last_seq = UINT16_MAX;
+    // Track what seq we expect to come
+    uint16_t expected_seq = 0;
+
+    // Randomizer for packet drop simulation
+    std::mt19937 rng(static_cast<uint32_t>(time(nullptr)));
+    const float DROP_RATE = 0.2f;
+    std::uniform_real_distribution<float> drop_dist(0.0f, 1.0f);
+    bool do_packet_drop = false;
 
     // Listen and receive packet loop
     while (true) {
@@ -54,41 +62,14 @@ int main()
         memcpy(msg, buf + offset, header.length);
         msg[header.length] = '\0';
 
-        // If the received seq is not equal to the expected seq
-        if (header.sequence != last_seq + 1)
-        {
-            // Duplicate suppression, check against last received sequence
-            if (last_seq == header.sequence)
-            {
-                /*
-                * Duplicate detected, sender didn't get our last ACK, resend it.
-                * Note: ACK variable values are being used from previous loop.
-                */
-                sent = sendto(sock, reinterpret_cast<char*>(ack_buf), ack_offset, 0,
-                    reinterpret_cast<sockaddr*>(&sender), senderLen);
-
-                // Print resposne ACK packet info
-                printf("Sent %d bytes; type - %d; seq - %d; len - %d\n",
-                    sent, ack_header.type, ack_header.sequence, ack_header.length);
-
-            }
-            else
-            {
-                printf("Received out-of-order packet, dropping it. Expected seq %d, received seq %d\n", 
-                    last_seq + 1, header.sequence);
-            }
-            // Proceed to next loop without printing received packet (we are dropping it)
-        }
-        else
+        // Received seq is the expected seq val - VALID packet
+        if (header.sequence == expected_seq)
         {
             // Printing packet information
             printf("------\n");
             printf("Received %d bytes; type - %d; seq - %d; len - %d\n",
                 received, header.type, header.sequence, header.length);
             printf("msg: \"%s\"\n", msg);
-
-            // Track latest sequence for duplicate suppression
-            last_seq = header.sequence;
 
             // If we received a data packet, send an ACK back
             if (header.type == static_cast<uint8_t>(PacketType::PKT_DATA))
@@ -105,13 +86,46 @@ int main()
                 memcpy(ack_buf + ack_offset, &ack_seq, 2);      ack_offset += 2;
                 ack_len = htons(ack_header.length);
                 memcpy(ack_buf + ack_offset, &ack_len, 2);      ack_offset += 2;
+
+                // ACK loss simulation
+                do_packet_drop = drop_dist(rng) < DROP_RATE;
+                if (do_packet_drop)
+                {
+                    printf("Simulating ACK loss\n");
+                    continue;
+                }
+
                 sent = sendto(sock, reinterpret_cast<char*>(ack_buf), ack_offset, 0,
                     reinterpret_cast<sockaddr*>(&sender), senderLen);
 
-                // Print resposne ACK packet info
-                printf("Sent %d bytes; type - %d; seq - %d; len - %d\n",
+                // Print response ACK packet info
+                printf("Sent ACK: %d bytes, type - %d, seq - %d, len - %d\n",
                     sent, ack_header.type, ack_header.sequence, ack_header.length);
+
+                ++expected_seq;
             }
+        }
+        // Received seq is the packet we expected previously - DUPE packet
+        else if (header.sequence == expected_seq - 1)
+        {
+            /*
+            * Duplicate detected, sender didn't get our last ACK, resend it.
+            * Note: ACK variable values are being used from previous loop.
+            */
+            printf("Duplicate detected - resending previous ACK\n");
+
+            sent = sendto(sock, reinterpret_cast<char*>(ack_buf), ack_offset, 0,
+                reinterpret_cast<sockaddr*>(&sender), senderLen);
+
+            // Print response ACK packet info
+            printf("Sent ACK %d bytes, type - %d, seq - %d, len - %d\n",
+                sent, ack_header.type, ack_header.sequence, ack_header.length);
+        }
+        // Otherwise - OUT-OF-ORDER packet
+        else
+        {
+            printf("Received out-of-order packet, dropping it. Expected seq %d, received seq %d\n",
+                expected_seq, header.sequence);
         }
     }
 

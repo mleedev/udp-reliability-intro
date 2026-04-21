@@ -2,6 +2,8 @@
 #include <ws2tcpip.h>
 #include <cstdio>
 #include <cstring>
+#include <random>
+#include <ctime>
 #include "protocol.h"
 
 int main()
@@ -38,9 +40,16 @@ int main()
     // Track retransmit attempts for each packet (resets per packet)
     const uint8_t RETRY_MAX = 3;
     uint8_t retries = 0;
-    
+
+    // Randomizer for packet drop simulation
+    std::mt19937 rng(static_cast<uint32_t>(time(nullptr)));
+    const float DROP_RATE = 0.2f;
+    std::uniform_real_distribution<float> rand_dist(0.0f, 1.0f);
+    bool do_packet_drop = false;
+    bool do_fake_dupe = false;
+
     // Stop at 100 packets sent
-    while (packet_count < 100) 
+    while (packet_count < 100)
     {
         // Payload (string) to be sent
         snprintf(msg, sizeof(msg), "Hello, UDP!%d", packet_count);
@@ -61,9 +70,17 @@ int main()
 
         // Appending msg to the packet
         memcpy(buf + offset, msg, strlen(msg));
+        buf_size = static_cast<int>(HEADER_SERIALIZED_SIZE + strlen(msg));
+
+        // Moving on to next loop if we "dropped" packet
+        do_packet_drop = rand_dist(rng) < DROP_RATE;
+        if (do_packet_drop)
+        {
+            printf("Simulating packet drop\n");
+            continue;
+        }
 
         // sendto fires a single datagram; no connection needed beforehand
-        buf_size = static_cast<int>(HEADER_SERIALIZED_SIZE + strlen(msg));
         sent = sendto(sock, reinterpret_cast<char*>(buf), buf_size, 0,
             reinterpret_cast<sockaddr*>(&dest), sender_len);
 
@@ -83,18 +100,17 @@ int main()
             if (WSAGetLastError() == WSAETIMEDOUT) 
             {
                 // If timed out, print timeout error message, then retry send
-                printf("###\n");
+                printf("######\n");
                 printf("Error: ACK timeout for seq %d\n", packet_count);
 
                 // Retry send
-                printf("Retrying send\n");
+                printf("Retrying send - retries: %d\n", retries + 1);
                 sent = sendto(sock, reinterpret_cast<char*>(buf), buf_size, 0,
                     reinterpret_cast<sockaddr*>(&dest), sender_len);
                 // Print bytes and message
                 printf("Retry sent %d bytes; type - %d; seq - %d; len - %d\n",
                     sent, header.type, header.sequence, header.length);
                 printf("msg: \"%s\"\n", msg);
-                printf("###");
 
                 received = recvfrom(sock, reinterpret_cast<char*>(ack_buf), sizeof(ack_buf), 0,
                     reinterpret_cast<sockaddr*>(&dest), &sender_len);
