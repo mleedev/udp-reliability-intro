@@ -54,20 +54,29 @@ int main()
         memcpy(msg, buf + offset, header.length);
         msg[header.length] = '\0';
 
-        // Duplicate suppression, check against last received sequence
-        if (last_seq == header.sequence)
+        // If the received seq is not equal to the expected seq
+        if (header.sequence != last_seq + 1)
         {
-            /*
-            * Duplicate detected, sender didn't get our last ACK, resend it.
-            * Note: ACK variable values are being used from previous loop.
-            */
-            sent = sendto(sock, reinterpret_cast<char*>(ack_buf), ack_offset, 0,
-                reinterpret_cast<sockaddr*>(&sender), senderLen);
+            // Duplicate suppression, check against last received sequence
+            if (last_seq == header.sequence)
+            {
+                /*
+                * Duplicate detected, sender didn't get our last ACK, resend it.
+                * Note: ACK variable values are being used from previous loop.
+                */
+                sent = sendto(sock, reinterpret_cast<char*>(ack_buf), ack_offset, 0,
+                    reinterpret_cast<sockaddr*>(&sender), senderLen);
 
-            // Print resposne ACK packet info
-            printf("Sent %d bytes; type - %d; seq - %d; len - %d\n",
-                sent, ack_header.type, ack_header.sequence, ack_header.length);
+                // Print resposne ACK packet info
+                printf("Sent %d bytes; type - %d; seq - %d; len - %d\n",
+                    sent, ack_header.type, ack_header.sequence, ack_header.length);
 
+            }
+            else
+            {
+                printf("Received out-of-order packet, dropping it. Expected seq %d, received seq %d\n", 
+                    last_seq + 1, header.sequence);
+            }
             // Proceed to next loop without printing received packet (we are dropping it)
         }
         else
