@@ -14,7 +14,7 @@ int main()
 
     // SOCK_DGRAM = UDP
     SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    uint32_t timeout = 2000;
+    uint32_t timeout = 500;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<char*>(&timeout), sizeof(timeout));
 
     // Describing the destination: localhost port 9000
@@ -43,7 +43,8 @@ int main()
 
     // Randomizer for packet drop simulation
     std::mt19937 rng(static_cast<uint32_t>(time(nullptr)));
-    const float DROP_RATE = 0.2f;
+    const float DROP_RATE = 0.1f;
+    const float DUPE_RATE = 0.1f;
     std::uniform_real_distribution<float> rand_dist(0.0f, 1.0f);
     bool do_packet_drop = false;
     bool do_fake_dupe = false;
@@ -51,33 +52,49 @@ int main()
     // Stop at 100 packets sent
     while (packet_count < 100)
     {
-        // Payload (string) to be sent
-        snprintf(msg, sizeof(msg), "Hello, UDP!%d", packet_count);
-
-        header.type = static_cast<uint8_t>(PacketType::PKT_DATA);
-        header.sequence = packet_count;
-        header.length = static_cast<uint16_t>(strlen(msg));
-
-        // Buffer
-        offset = 0;
-
-        // Serializing each field of the packet header
-        buf[offset] = header.type;      offset += 1;
-        seq = htons(header.sequence);
-        memcpy(buf + offset, &seq, 2);  offset += 2;
-        len = htons(header.length);
-        memcpy(buf + offset, &len, 2);  offset += 2;
-
-        // Appending msg to the packet
-        memcpy(buf + offset, msg, strlen(msg));
-        buf_size = static_cast<int>(HEADER_SERIALIZED_SIZE + strlen(msg));
-
-        // Moving on to next loop if we "dropped" packet
-        do_packet_drop = rand_dist(rng) < DROP_RATE;
-        if (do_packet_drop)
+        printf("-------\n");
+        // Intentionally send duplicate of previous packet (edge case guard: initial packet)
+        do_fake_dupe = packet_count > 0 && rand_dist(rng) < DUPE_RATE;
+        if (do_fake_dupe)
         {
-            printf("Simulating packet drop\n");
-            continue;
+            /*
+            * The if block skips constructing the new packet.
+            * We also skip incrementing the packet_count at the end with `if (do_fake_dupe)`
+            */ 
+            printf("Sending duplicate packet\n");
+        }
+        else
+        {
+            // ###################### Packet construction ######################
+            // Payload (string) to be sent
+            snprintf(msg, sizeof(msg), "Hello, UDP!%d", packet_count);
+
+            header.type = static_cast<uint8_t>(PacketType::PKT_DATA);
+            header.sequence = packet_count;
+            header.length = static_cast<uint16_t>(strlen(msg));
+
+            // Buffer
+            offset = 0;
+
+            // Serializing each field of the packet header
+            buf[offset] = header.type;      offset += 1;
+            seq = htons(header.sequence);
+            memcpy(buf + offset, &seq, 2);  offset += 2;
+            len = htons(header.length);
+            memcpy(buf + offset, &len, 2);  offset += 2;
+
+            // Appending msg to the packet
+            memcpy(buf + offset, msg, strlen(msg));
+            buf_size = static_cast<int>(HEADER_SERIALIZED_SIZE + strlen(msg));
+            // #################################################################
+
+            // Moving on to next loop if we "dropped" packet
+            do_packet_drop = rand_dist(rng) < DROP_RATE;
+            if (do_packet_drop)
+            {
+                printf("Simulating packet drop\n");
+                continue;
+            }
         }
 
         // sendto fires a single datagram; no connection needed beforehand
@@ -85,7 +102,6 @@ int main()
             reinterpret_cast<sockaddr*>(&dest), sender_len);
 
         // Print bytes and message
-        printf("-------\n");
         printf("Sent %d bytes; type - %d; seq - %d; len - %d\n",
             sent, header.type, header.sequence, header.length);
         printf("msg: \"%s\"\n", msg);
@@ -146,7 +162,7 @@ int main()
         ack_header.length = ntohs(ack_len);
 
         // Print information about received ACK packet
-        printf("Received %d bytes; type - %d; seq - %d; len - %d\n", 
+        printf("Received ACK %d bytes, type - %d, seq - %d, len - %d\n", 
             received, ack_header.type, ack_header.sequence, ack_header.length);
 
         // If header.type isn't the ACK type then print an error (this shouldn't happen for this demo)
@@ -160,7 +176,7 @@ int main()
         }
 
         // Increment packet count, move to next loop iteration
-        ++packet_count;
+        if (!do_fake_dupe) ++packet_count;
     }
 
     closesocket(sock);

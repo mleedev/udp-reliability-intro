@@ -39,7 +39,7 @@ int main()
 
     // Randomizer for packet drop simulation
     std::mt19937 rng(static_cast<uint32_t>(time(nullptr)));
-    const float DROP_RATE = 0.2f;
+    const float DROP_RATE = 0.1f;
     std::uniform_real_distribution<float> drop_dist(0.0f, 1.0f);
     bool do_packet_drop = false;
 
@@ -62,12 +62,12 @@ int main()
         memcpy(msg, buf + offset, header.length);
         msg[header.length] = '\0';
 
+        printf("------\n");
         // Received seq is the expected seq val - VALID packet
         if (header.sequence == expected_seq)
         {
             // Printing packet information
-            printf("------\n");
-            printf("Received %d bytes; type - %d; seq - %d; len - %d\n",
+            printf("Received %d bytes, type - %d, seq - %d, len - %d\n",
                 received, header.type, header.sequence, header.length);
             printf("msg: \"%s\"\n", msg);
 
