@@ -37,6 +37,10 @@ int main()
     // Track what seq we expect to come
     uint16_t expected_seq = 0;
 
+    // Summary stats
+    uint16_t total_valid_packets = 0, total_dupes_detected = 0, 
+        total_ack_drops_simulated = 0, total_out_of_order = 0;
+
     // Randomizer for packet drop simulation
     std::mt19937 rng(static_cast<uint32_t>(time(nullptr)));
     const float DROP_RATE = 0.1f;
@@ -62,48 +66,78 @@ int main()
         memcpy(msg, buf + offset, header.length);
         msg[header.length] = '\0';
 
+        // End of session packet
+        if (header.type == static_cast<uint8_t>(PacketType::PKT_END))
+        {
+            // Printing packet information
+            printf("------\n");
+            printf("Received END packet: %d bytes, type - %d, seq - %d, len - %d\n",
+                received, header.type, header.sequence, header.length);
+
+            ack_header.type = static_cast<uint8_t>(PacketType::PKT_ACK);
+            ack_header.sequence = header.sequence;
+            ack_header.length = 0;
+
+            // Serializing ACK response packet header
+            ack_offset = 0;
+            ack_buf[ack_offset] = ack_header.type;          ack_offset += 1;
+            ack_seq = htons(ack_header.sequence);
+            memcpy(ack_buf + ack_offset, &ack_seq, 2);      ack_offset += 2;
+            ack_len = htons(ack_header.length);
+            memcpy(ack_buf + ack_offset, &ack_len, 2);      ack_offset += 2;
+
+            sent = sendto(sock, reinterpret_cast<char*>(ack_buf), ack_offset, 0,
+                reinterpret_cast<sockaddr*>(&sender), senderLen);
+
+            // Print response ACK packet info
+            printf("Sent ACK: %d bytes, type - %d, seq - %d, len - %d\n",
+                sent, ack_header.type, ack_header.sequence, ack_header.length);
+
+            break;
+        }
+
         printf("------\n");
+
         // Received seq is the expected seq val - VALID packet
         if (header.sequence == expected_seq)
         {
+            ++total_valid_packets;
+
             // Printing packet information
             printf("Received %d bytes, type - %d, seq - %d, len - %d\n",
                 received, header.type, header.sequence, header.length);
             printf("msg: \"%s\"\n", msg);
 
-            // If we received a data packet, send an ACK back
-            if (header.type == static_cast<uint8_t>(PacketType::PKT_DATA))
+            // Visualizing packet header for ACK response packet
+            ack_header.type = static_cast<uint8_t>(PacketType::PKT_ACK);
+            ack_header.sequence = header.sequence;
+            ack_header.length = 0;
+
+            // Serializing ACK response packet header
+            ack_offset = 0;
+            ack_buf[ack_offset] = ack_header.type;          ack_offset += 1;
+            ack_seq = htons(ack_header.sequence);
+            memcpy(ack_buf + ack_offset, &ack_seq, 2);      ack_offset += 2;
+            ack_len = htons(ack_header.length);
+            memcpy(ack_buf + ack_offset, &ack_len, 2);      ack_offset += 2;
+
+            // ACK loss simulation
+            do_packet_drop = drop_dist(rng) < DROP_RATE;
+            if (do_packet_drop)
             {
-                // Visualizing packet header for ACK response packet
-                ack_header.type = static_cast<uint8_t>(PacketType::PKT_ACK);
-                ack_header.sequence = header.sequence;
-                ack_header.length = 0;
-
-                // Serializing ACK response packet header
-                ack_offset = 0;
-                ack_buf[ack_offset] = ack_header.type;          ack_offset += 1;
-                ack_seq = htons(ack_header.sequence);
-                memcpy(ack_buf + ack_offset, &ack_seq, 2);      ack_offset += 2;
-                ack_len = htons(ack_header.length);
-                memcpy(ack_buf + ack_offset, &ack_len, 2);      ack_offset += 2;
-
-                // ACK loss simulation
-                do_packet_drop = drop_dist(rng) < DROP_RATE;
-                if (do_packet_drop)
-                {
-                    printf("Simulating ACK loss\n");
-                    continue;
-                }
-
-                sent = sendto(sock, reinterpret_cast<char*>(ack_buf), ack_offset, 0,
-                    reinterpret_cast<sockaddr*>(&sender), senderLen);
-
-                // Print response ACK packet info
-                printf("Sent ACK: %d bytes, type - %d, seq - %d, len - %d\n",
-                    sent, ack_header.type, ack_header.sequence, ack_header.length);
-
-                ++expected_seq;
+                printf("Simulating ACK loss\n");
+                ++total_ack_drops_simulated;
+                continue;
             }
+
+            sent = sendto(sock, reinterpret_cast<char*>(ack_buf), ack_offset, 0,
+                reinterpret_cast<sockaddr*>(&sender), senderLen);
+
+            // Print response ACK packet info
+            printf("Sent ACK: %d bytes, type - %d, seq - %d, len - %d\n",
+                sent, ack_header.type, ack_header.sequence, ack_header.length);
+
+            ++expected_seq;
         }
         // Received seq is the packet we expected previously - DUPE packet
         else if (header.sequence == expected_seq - 1)
@@ -112,7 +146,12 @@ int main()
             * Duplicate detected, sender didn't get our last ACK, resend it.
             * Note: ACK variable values are being used from previous loop.
             */
+            // Printing packet information
+            printf("Received %d bytes, type - %d, seq - %d, len - %d\n",
+                received, header.type, header.sequence, header.length);
+            printf("msg: \"%s\"\n", msg);
             printf("Duplicate detected - resending previous ACK\n");
+            ++total_dupes_detected;
 
             sent = sendto(sock, reinterpret_cast<char*>(ack_buf), ack_offset, 0,
                 reinterpret_cast<sockaddr*>(&sender), senderLen);
@@ -126,8 +165,17 @@ int main()
         {
             printf("Received out-of-order packet, dropping it. Expected seq %d, received seq %d\n",
                 expected_seq, header.sequence);
+            ++total_out_of_order;
         }
     }
+
+    // Summarize stats
+    printf("\n");
+    printf("----- Summary of Stats -----\n");
+    printf("Total Valid Packets Received: %d\n", total_valid_packets);
+    printf("Total Duplicates Detected: %d\n", total_dupes_detected);
+    printf("Total ACK Drops Simulated: %d\n", total_ack_drops_simulated);
+    printf("Total Out-of-Order Packets Detected: %d\n", total_out_of_order);
 
     closesocket(sock);
     WSACleanup(); // Release Winsock resources

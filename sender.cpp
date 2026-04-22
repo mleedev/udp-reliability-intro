@@ -36,7 +36,8 @@ int main()
     int sent, received;
 
     // Track packet count (sequence)
-    uint16_t packet_count = 0;
+    uint16_t packet_count = 0, total_retransmits = 0, 
+        total_drops_simulated = 0, total_dupes_simulated = 0;
     // Track retransmit attempts for each packet (resets per packet)
     const uint8_t RETRY_MAX = 3;
     uint8_t retries = 0;
@@ -62,6 +63,7 @@ int main()
             * We also skip incrementing the packet_count at the end with `if (do_fake_dupe)`
             */ 
             printf("Sending duplicate packet\n");
+            ++total_dupes_simulated;
         }
         else
         {
@@ -93,6 +95,7 @@ int main()
             if (do_packet_drop)
             {
                 printf("Simulating packet drop\n");
+                ++total_drops_simulated;
                 continue;
             }
         }
@@ -102,7 +105,7 @@ int main()
             reinterpret_cast<sockaddr*>(&dest), sender_len);
 
         // Print bytes and message
-        printf("Sent %d bytes; type - %d; seq - %d; len - %d\n",
+        printf("Sent %d bytes, type - %d, seq - %d, len - %d\n",
             sent, header.type, header.sequence, header.length);
         printf("msg: \"%s\"\n", msg);
 
@@ -124,23 +127,24 @@ int main()
                 sent = sendto(sock, reinterpret_cast<char*>(buf), buf_size, 0,
                     reinterpret_cast<sockaddr*>(&dest), sender_len);
                 // Print bytes and message
-                printf("Retry sent %d bytes; type - %d; seq - %d; len - %d\n",
+                printf("Retry sent: %d bytes, type - %d, seq - %d, len - %d\n",
                     sent, header.type, header.sequence, header.length);
                 printf("msg: \"%s\"\n", msg);
 
                 received = recvfrom(sock, reinterpret_cast<char*>(ack_buf), sizeof(ack_buf), 0,
                     reinterpret_cast<sockaddr*>(&dest), &sender_len);
 
-                // Increment retry counter
+                // Increment this packet's retry counter and total retry counter
                 ++retries;
+                ++total_retransmits;
 
                 // Need to exit gracefully if we reach retry maximum
-                if (retries == RETRY_MAX) 
+                if (retries == RETRY_MAX)
                 {
+                    printf("######\n");
                     printf("Max retries hit for seq %d\n", packet_count);
-                    closesocket(sock);
-                    WSACleanup();
-                    return 1;
+                    //++packet_count;
+                    goto end_session;
                 }
             }
             else 
@@ -168,16 +172,74 @@ int main()
         // If header.type isn't the ACK type then print an error (this shouldn't happen for this demo)
         if (ack_header.type == static_cast<uint8_t>(PacketType::PKT_DATA)) 
         {
-            printf("Error: Received data packet while expecting ACK");
+            printf("Error: Received data packet while expecting ACK\n");
         }
         if (ack_header.sequence != header.sequence) 
         {
-            printf("Error: Mismatching sequence in ACK header");
+            printf("Error: Mismatching sequence in ACK header\n");
         }
 
         // Increment packet count, move to next loop iteration
         if (!do_fake_dupe) ++packet_count;
     }
+
+end_session:
+    // ##### Send real, not dropped, end packet to the receiver so they know to stop and print stats #####
+    header.type = static_cast<uint8_t>(PacketType::PKT_END);
+    header.sequence = packet_count;
+    header.length = 0;
+
+    // Serializing each field of the packet header
+    offset = 0;
+    buf[offset] = header.type;      offset += 1;
+    seq = htons(header.sequence);
+    memcpy(buf + offset, &seq, 2);  offset += 2;
+    len = htons(header.length);
+    memcpy(buf + offset, &len, 2);  offset += 2;
+
+    // sendto fires a single datagram; no connection needed beforehand
+    sent = sendto(sock, reinterpret_cast<char*>(buf), HEADER_SERIALIZED_SIZE, 0,
+        reinterpret_cast<sockaddr*>(&dest), sender_len);
+
+    // Print bytes and message
+    printf("-------\n");
+    printf("Sent END packet: %d bytes, type - %d; seq - %d; len - %d\n",
+        sent, header.type, header.sequence, header.length);
+
+
+
+    // Listen for ACK response
+    received = recvfrom(sock, reinterpret_cast<char*>(ack_buf), sizeof(ack_buf), 0,
+        reinterpret_cast<sockaddr*>(&dest), &sender_len);
+
+    ack_offset = 0;
+    ack_header.type = ack_buf[ack_offset];      ack_offset += 1;
+    memcpy(&ack_seq, ack_buf + ack_offset, 2);  ack_offset += 2;
+    memcpy(&ack_len, ack_buf + ack_offset, 2);  ack_offset += 2;
+    ack_header.sequence = ntohs(ack_seq);
+    ack_header.length = ntohs(ack_len);
+
+    // Print information about received ACK packet
+    printf("Received ACK %d bytes, type - %d, seq - %d, len - %d\n",
+        received, ack_header.type, ack_header.sequence, ack_header.length);
+
+    // If header.type isn't the ACK type then print an error (this shouldn't happen for this demo)
+    if (ack_header.type == static_cast<uint8_t>(PacketType::PKT_DATA))
+    {
+        printf("Error: Received data packet while expecting ACK\n");
+    }
+    if (ack_header.sequence != header.sequence)
+    {
+        printf("Error: Mismatching sequence in ACK header\n");
+    }
+    // ###################################################################################################
+
+    // Summarize stats
+    printf("\n");
+    printf("----- Summary of Stats -----\n");
+    printf("Total Retransmits: %d\n", total_retransmits);
+    printf("Total Drops Simulated: %d\n", total_drops_simulated);
+    printf("Total Duplicates Simulated: %d\n", total_dupes_simulated);
 
     closesocket(sock);
     WSACleanup(); // Release Winsock resources

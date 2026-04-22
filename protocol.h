@@ -11,7 +11,8 @@ struct PacketHeader
 enum class PacketType : uint8_t
 {
 	PKT_DATA = 0,
-	PKT_ACK = 1
+	PKT_ACK = 1,
+	PKT_END = 2,
 };
 
 inline constexpr size_t HEADER_SERIALIZED_SIZE = 5; // 1 + 2 + 2
