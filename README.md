@@ -47,8 +47,10 @@ Start the receiver first, then the sender — the receiver must be listening bef
 
 - Chose Windows sockets for simplicity and will use POSIX with abstraction in followups to cover bases.
 - Chose UDP because I wanted hands on learning about the reliability layer.
-- Chose 508 bytes as maximum datagram size to avoid fragmentation in worst-case MTU paths. 
-  576 (min IPv4 MTU) - 60 (max IP header) - 8 (UDP header) = 508
+- ~~Chose 508 bytes as maximum datagram size to avoid fragmentation in worst-case MTU paths. 
+  576 (min IPv4 MTU) - 60 (max IP header) - 8 (UDP header) = 508~~
+- Learned that 576 bytes is a value from RFC 791 that is not equivalent to MTU. 
+Standard ethernet MTU is 1500 bytes. Max payload of 1400 bytes leaves 100 bytes for headers.
 - Kept variable initialization outside of send/receive loops to retain last buffer for duplicate detection.
 
 ### Scope:
